@@ -135,7 +135,7 @@ var graphqlEndpoint = os.Getenv("ADDRESS")
 
 func getHeaders() http.Header {
 	headersJSON := os.Getenv("GRAPHQL_HEADERS")
-	var headers = make(http.Header)
+	headers := make(http.Header)
 	if headersJSON != "" {
 		var tmp map[string]string
 		if err := json.Unmarshal([]byte(headersJSON), &tmp); err != nil {
@@ -228,12 +228,49 @@ func registerTools(srv *server.MCPServer) {
 	invokeGraphqlTool := mcp.NewTool(
 		"invoke_graphql",
 		mcp.WithDescription(invokeToolDescription),
-		mcp.WithString("operation", mcp.Description("The entire GraphQL operation (query or mutation)"), mcp.Required()),
+		mcp.WithString("query", mcp.Description("The entire GraphQL query"), mcp.Required()),
+		mcp.WithString("mutation", mcp.Description("The entire GraphQL mutation"), mcp.Required()),
 		mcp.WithString("variables", mcp.Description("JSON-encoded variables for the operation")),
 	)
 	srv.AddTool(invokeGraphqlTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		operation := request.Params.Arguments["operation"].(string)
-		variablesJSON, _ := request.Params.Arguments["variables"].(string)
+		// Implement panic recovery
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("Recovered from panic in invoke_graphql: %v", r)
+			}
+		}()
+
+		// Safely access arguments with proper type checking
+		var query, mutation, variablesJSON string
+
+		if queryVal, ok := request.Params.Arguments["query"]; ok {
+			if queryStr, ok := queryVal.(string); ok {
+				query = queryStr
+			}
+		}
+
+		if mutationVal, ok := request.Params.Arguments["mutation"]; ok {
+			if mutationStr, ok := mutationVal.(string); ok {
+				mutation = mutationStr
+			}
+		}
+
+		if varsVal, ok := request.Params.Arguments["variables"]; ok {
+			if varsStr, ok := varsVal.(string); ok {
+				variablesJSON = varsStr
+			}
+		}
+
+		// Determine which operation to use
+		operation := query
+		if mutation != "" {
+			operation = mutation
+		}
+
+		// Validate we have an operation to execute
+		if operation == "" {
+			return toolError("No valid query or mutation provided"), nil
+		}
 
 		resp, err := invokeGraphQLOperation(ctx, operation, variablesJSON)
 		if err != nil {
