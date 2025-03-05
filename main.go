@@ -132,27 +132,31 @@ Response:
 	jobs: []
 	pagination: Pagination
 `
+
+	// Tool: set_headers
+	setHeadersToolDescription = `Set or overwrite HTTP headers to be used in GraphQL requests.
+
+Best Practices:
+- Use this tool to configure authentication headers or other necessary HTTP headers.
+- Headers will persist between requests until explicitly changed.
+
+Arguments:
+- headers (string, Required): JSON-encoded string of headers to set.
+
+Example Usage:
+Request:
+  set_headers("{\"Authorization\": \"Bearer token123\", \"X-API-Key\": \"abc123\"}")
+
+Response:
+  Headers updated successfully
+`
 )
 
 // Replace with your actual GraphQL endpoint
 var graphqlEndpoint = os.Getenv("ADDRESS")
 
-// getHeaders parses the GRAPHQL_HEADERS environment variable
-// and returns an http.Header object containing the parsed headers.
-func getHeaders() http.Header {
-	headersJSON := os.Getenv("GRAPHQL_HEADERS")
-	headers := make(http.Header)
-	if headersJSON != "" {
-		var tmp map[string]string
-		if err := json.Unmarshal([]byte(headersJSON), &tmp); err != nil {
-			log.Fatal("Failed to parse headers JSON:", err)
-		}
-		for k, v := range tmp {
-			headers.Set(k, v)
-		}
-	}
-	return headers
-}
+// Global variable to store headers set by the user
+var currentHeaders = make(http.Header)
 
 // main initializes and starts the MCP server with GraphQL tools.
 // It validates required environment variables, performs introspection of the GraphQL endpoint,
@@ -161,12 +165,6 @@ func main() {
 	// Validate environment variables
 	if graphqlEndpoint == "" {
 		log.Fatal("Environment variable ADDRESS is required")
-	}
-
-	// introspect the GraphQL endpoint
-	_, err := graphql.Introspect(graphqlEndpoint, getHeaders())
-	if err != nil {
-		log.Fatal("Failed to introspect GraphQL endpoint:", err)
 	}
 
 	// Create a new MCP server
@@ -190,6 +188,7 @@ func main() {
 //   - list_mutations
 //   - describe
 //   - invoke_graphql
+//   - set_headers
 func registerTools(srv *server.MCPServer) {
 	// Tool 1: list_queries
 	listQueriesTool := mcp.NewTool(
@@ -199,7 +198,7 @@ func registerTools(srv *server.MCPServer) {
 	srv.AddTool(listQueriesTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		queries, err := listGraphQLQueries()
 		if err != nil {
-			return toolError("Failed to list queries: " + err.Error()), nil
+			return toolError("Failed to list queries: " + err.Error() + ". Do you need no send an Authorization header?"), nil
 		}
 		return toolSuccess(queries), nil
 	})
@@ -212,7 +211,7 @@ func registerTools(srv *server.MCPServer) {
 	srv.AddTool(listMutationsTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		mutations, err := listGraphQLMutations()
 		if err != nil {
-			return toolError("Failed to list mutations: " + err.Error()), nil
+			return toolError("Failed to list mutations: " + err.Error() + ". Do you need no send an Authorization header?"), nil
 		}
 		return toolSuccess(mutations), nil
 	})
@@ -227,7 +226,7 @@ func registerTools(srv *server.MCPServer) {
 		entities := request.Params.Arguments["entities"].(string)
 		description, err := describeGraphQLEntities(entities)
 		if err != nil {
-			return toolError("Failed to describe entities: " + err.Error()), nil
+			return toolError("Failed to describe entities: " + err.Error() + ". Do you need no send an Authorization header?"), nil
 		}
 		return toolSuccess(description), nil
 	})
@@ -283,9 +282,24 @@ func registerTools(srv *server.MCPServer) {
 
 		resp, err := invokeGraphQLOperation(ctx, operation, variablesJSON)
 		if err != nil {
-			return toolError(fmt.Sprintf("Failed to invoke GraphQL operation. Operation: %s variables: %v error: %v", operation, variablesJSON, err)), nil
+			return toolError(fmt.Sprintf("Failed to invoke GraphQL operation. Operation: %s variables: %v error: %v. ", operation, variablesJSON, err)), nil
 		}
 		return toolSuccess(resp), nil
+	})
+
+	// Tool 5: set_headers
+	setHeadersTool := mcp.NewTool(
+		"set_headers",
+		mcp.WithDescription(setHeadersToolDescription),
+		mcp.WithString("headers", mcp.Description("JSON-encoded string of headers to set"), mcp.Required()),
+	)
+
+	srv.AddTool(setHeadersTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		headersJSON := request.Params.Arguments["headers"].(string)
+		if err := setHeaders(headersJSON); err != nil {
+			return toolError("Failed to set headers: " + err.Error()), nil
+		}
+		return toolSuccess("Headers updated successfully"), nil
 	})
 }
 
@@ -370,15 +384,11 @@ func invokeGraphQLOperation(ctx context.Context, operation, variablesJSON string
 		}
 	}
 
-	// Read and decode GraphQL headers from environment variable
-	headersJSON := os.Getenv("GRAPHQL_HEADERS")
-	var headers map[string]string
-	if headersJSON != "" {
-		if err := json.Unmarshal([]byte(headersJSON), &headers); err != nil {
-			return "", fmt.Errorf("failed to parse headers JSON: %w", err)
-		}
-		for k, v := range headers {
-			req.Header.Set(k, v)
+	// Add the current headers to the request
+	headers := getHeaders()
+	for key, values := range headers {
+		for _, value := range values {
+			req.Header.Set(key, value)
 		}
 	}
 
@@ -411,4 +421,50 @@ func toolError(message string) *mcp.CallToolResult {
 		Content: []interface{}{mcp.NewTextContent(message)},
 		IsError: true,
 	}
+}
+
+// setHeaders merges user-specified headers with the ones from the environment
+func setHeaders(headersJSON string) error {
+	var newHeaders map[string]string
+	if err := json.Unmarshal([]byte(headersJSON), &newHeaders); err != nil {
+		return fmt.Errorf("failed to parse headers JSON: %w", err)
+	}
+
+	// Load headers from environment
+	envHeadersJSON := os.Getenv("GRAPHQL_HEADERS")
+	if envHeadersJSON != "" {
+		var envHeaders map[string]string
+		if err := json.Unmarshal([]byte(envHeadersJSON), &envHeaders); err != nil {
+			return fmt.Errorf("failed to parse env headers JSON: %w", err)
+		}
+		for k, v := range envHeaders {
+			currentHeaders.Set(k, v)
+		}
+	}
+
+	// Overwrite with user-provided headers
+	for k, v := range newHeaders {
+		currentHeaders.Set(k, v)
+	}
+
+	return nil
+}
+
+// getHeaders retrieves the currently stored headers
+func getHeaders() http.Header {
+	// If headers are empty, initialize from environment
+	if len(currentHeaders) == 0 {
+		headersJSON := os.Getenv("GRAPHQL_HEADERS")
+		if headersJSON != "" {
+			var tmp map[string]string
+			if err := json.Unmarshal([]byte(headersJSON), &tmp); err != nil {
+				log.Println("Warning: Failed to parse headers JSON:", err)
+			} else {
+				for k, v := range tmp {
+					currentHeaders.Set(k, v)
+				}
+			}
+		}
+	}
+	return currentHeaders
 }
