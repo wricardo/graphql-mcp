@@ -1,3 +1,7 @@
+// Package main provides a GraphQL client bridge for MCP (Multimodal Capability Protocol)
+// that allows for introspection and execution of GraphQL operations. It exposes
+// tools for listing queries and mutations, describing schema entities, and invoking
+// GraphQL operations against a specified endpoint.
 package main
 
 import (
@@ -35,18 +39,18 @@ Arguments:
 Example Usage:
 Request:
   invoke_graphql(
-    operation: "mutation CreateCandidate($input: CandidateInput!){ createCandidate(input: $input) { id name } }",
-    variables: "{\"input\": {\"name\": \"John Doe\"}}"
+	operation: "mutation CreateCandidate($input: CandidateInput!){ createCandidate(input: $input) { id name } }",
+	variables: "{\"input\": {\"name\": \"John Doe\"}}"
   )
 
 Response:
   {
-    "data": {
-      "createCandidate": {
-        "id": "123",
-        "name": "John Doe"
-      }
-    }
+	"data": {
+	  "createCandidate": {
+		"id": "123",
+		"name": "John Doe"
+	  }
+	}
   }
 `
 	// Tool: list_queries
@@ -77,7 +81,7 @@ Response:
 This tool simplifies the process of locating and understanding mutation operations.
 
 Best Practices:
-- Start with this tool to get a high-level view of your schema’s mutation capabilities.
+- Start with this tool to get a high-level view of your schema's mutation capabilities.
 - Use it for quick verification of available mutations after schema updates or during debugging.
 - Helps in integration testing by listing all possible state-changing operations.
 
@@ -111,28 +115,30 @@ Request:
 Response:
   # jobs (Query)
   Arguments:
-    page: Int
-    size: Int
-    search: String
-    params: JobQueryParams
+	page: Int
+	size: Int
+	search: String
+	params: JobQueryParams
   Return Type: JobsPage
 
   # JobQueryParams (INPUT_OBJECT)
   Input Fields:
-    excludedTalentId: String
-    locationType: LocationType
-    status: JobStatus
+	excludedTalentId: String
+	locationType: LocationType
+	status: JobStatus
 
   # JobsPage (OBJECT)
   Fields:
-    jobs: []
-    pagination: Pagination
+	jobs: []
+	pagination: Pagination
 `
 )
 
 // Replace with your actual GraphQL endpoint
 var graphqlEndpoint = os.Getenv("ADDRESS")
 
+// getHeaders parses the GRAPHQL_HEADERS environment variable
+// and returns an http.Header object containing the parsed headers.
 func getHeaders() http.Header {
 	headersJSON := os.Getenv("GRAPHQL_HEADERS")
 	headers := make(http.Header)
@@ -148,6 +154,9 @@ func getHeaders() http.Header {
 	return headers
 }
 
+// main initializes and starts the MCP server with GraphQL tools.
+// It validates required environment variables, performs introspection of the GraphQL endpoint,
+// registers the available tools, and serves the MCP server over standard I/O.
 func main() {
 	// Validate environment variables
 	if graphqlEndpoint == "" {
@@ -280,7 +289,8 @@ func registerTools(srv *server.MCPServer) {
 	})
 }
 
-// listGraphQLQueries uses the older "github.com/wricardo/graphql" client for introspection
+// listGraphQLQueries performs introspection to retrieve all available
+// queries from the GraphQL schema and formats them as a string.
 func listGraphQLQueries() (string, error) {
 	res, err := graphql.Introspect(graphqlEndpoint, getHeaders())
 	if err != nil {
@@ -295,7 +305,8 @@ func listGraphQLQueries() (string, error) {
 	return sb.String(), nil
 }
 
-// listGraphQLMutations uses the older "github.com/wricardo/graphql" client for introspection
+// listGraphQLMutations performs introspection to retrieve all available
+// mutations from the GraphQL schema and formats them as a string.
 func listGraphQLMutations() (string, error) {
 	res, err := graphql.Introspect(graphqlEndpoint, getHeaders())
 	if err != nil {
@@ -310,7 +321,8 @@ func listGraphQLMutations() (string, error) {
 	return sb.String(), nil
 }
 
-// describeGraphQLEntities uses the older "github.com/wricardo/graphql" client for deeper introspection
+// describeGraphQLEntities performs detailed introspection on the specified
+// GraphQL entities (types, queries, mutations) and returns their descriptions.
 func describeGraphQLEntities(entities string) (string, error) {
 	res, err := graphql.Introspect(graphqlEndpoint, getHeaders())
 	if err != nil {
@@ -338,8 +350,8 @@ func describeGraphQLEntities(entities string) (string, error) {
 	return strings.Join(descriptions, "\n\n"), nil
 }
 
-// invokeGraphQLOperation uses the "github.com/machinebox/graphql" client (aliased as graphqlMB)
-// to execute a query or mutation, returning a JSON string of the result.
+// invokeGraphQLOperation executes a GraphQL operation (query or mutation) with the
+// provided variables and returns the JSON response as a string.
 func invokeGraphQLOperation(ctx context.Context, operation, variablesJSON string) (string, error) {
 	// Create a Machine Box GraphQL client
 	client := graphqlMB.NewClient(graphqlEndpoint)
@@ -383,7 +395,8 @@ func invokeGraphQLOperation(ctx context.Context, operation, variablesJSON string
 	return string(resBytes), nil
 }
 
-// toolSuccess formats a successful tool response
+// toolSuccess formats a successful tool response by wrapping
+// the provided message in an MCP CallToolResult structure.
 func toolSuccess(message string) *mcp.CallToolResult {
 	return &mcp.CallToolResult{
 		Content: []interface{}{mcp.NewTextContent(message)},
@@ -391,7 +404,8 @@ func toolSuccess(message string) *mcp.CallToolResult {
 	}
 }
 
-// toolError formats an error tool response
+// toolError formats an error tool response by wrapping
+// the provided error message in an MCP CallToolResult structure.
 func toolError(message string) *mcp.CallToolResult {
 	return &mcp.CallToolResult{
 		Content: []interface{}{mcp.NewTextContent(message)},
